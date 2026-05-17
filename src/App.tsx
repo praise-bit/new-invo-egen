@@ -137,14 +137,15 @@ export default function App() {
       <div className="main-layout">
         <div className="invoice-column">
           <div className="invoice-wrapper" ref={invoiceRef}>
-            <img
-              src={templateSrc}
-              classname="invoice-img"
-              crossOrigin="anonymous"
-              onload={() => setImageReady(true)}
-              draggable={false}
-            />
-
+  <img
+    src={templateSrc}
+    className="invoice-img"       
+    crossOrigin="anonymous"
+    onLoad={() => setImageReady(true)}
+    draggable={false}
+    alt="Invoice Template"
+  />
+  
             <div className="overlay invoice-number">{invoiceNum}</div>
 
             <div className="overlay date-day">{day}</div>

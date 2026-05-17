@@ -72,15 +72,19 @@ html,
 }
 
 .invoice-column {
-  flex: 90;
+  flex: 1;
   max-width: 850px;
 }
 
 .invoice-wrapper {
-  position: relative;
-  width: 100%;
-  max-width: 750px;
-  margin-bottom: 20px;
+    position: relative;
+    width: 100%;
+    max-width: 719px;
+    margin: 30px auto;
+    padding: 10px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.12);
 }
 
 @keyframes fadeUp {
@@ -98,7 +102,7 @@ html,
   width: 100%;
   height: auto;
   display: block;
-  z-index: 1;
+  border-radius: 6px;
 }
 
 .overlay {
@@ -113,15 +117,15 @@ html,
 }
 
 .invoice-number {
-  top: 50px;
-  right: 420px;
+  top: 60px;
+  right: 410px;
   font-weight: bold;
   font-size: 35px;
 }
 
 .date-day {
   top: 270px;
-  left: 100px;
+  left: 110px;
   font-size: 19px;
 }
 .date-month {
@@ -136,13 +140,13 @@ html,
 }
 
 .client-name {
-  top: 334px;
-  left: 110px;
+  top: 330px;
+  left: 115px;
   font-size: 21px;
 }
 
 .description {
-  top: 435px;
+  top: 420px;
   left: 105px;
   max-width: 100px;
   font-size: 18px;
@@ -155,26 +159,26 @@ html,
 }
 
 .unit-price {
-  top: 437px;
-  left: 480px;
+  top: 430px;
+  left: 475px;
   font-size: 20px;
 }
 
 .vat-rate {
-  top: 700px;
+  top: 710px;
   left: 100px;
   font-size: 20px;
 }
 
 .vat-amount {
-  top: 700px;
-  left: 570px;
+  top: 718px;
+  left: 560px;
   font-size: 20px;
 }
 
 .grand-total {
-  top: 840px;
-  right: 110px;
+  top: 815px;
+  right: 130px;
   font-weight: bold;
   font-size: 20px;
 }
@@ -366,8 +370,8 @@ html,
   position: absolute !important;
   z-index: 20 !important;
 
-  top: 440px;
-  left: 410px;
+  top: 430Px;
+  left: 405px;
 
   font-size: 18px;
 }
@@ -377,7 +381,7 @@ html,
   z-index: 25 !important;
   color: #000 !important;
 
-  top: 892px;
+  top: 880px;
   left: 350px;
 
   max-width: 500px;
@@ -468,7 +472,7 @@ html,
 
 .overlay.description {
   position: absolute !important;
-  top: 435px;
+  top: 430px;
   left: 105px;
   font-size: 18px;
   display: block;
@@ -485,7 +489,7 @@ html,
 
 .overlay.amount-words {
   position: absolute !important;
-  top: 860px;
+  top: 830px;
   left: 50px;
   font-size: 18px;
   line-height: 22px;
@@ -502,9 +506,10 @@ html,
 
 .overlay.amount {
   position: absolute;
-  top: 440px;
-  left: 575px;
+  top: 432px;
+  left: 555px;
   font-size: 18px;
-  /max-width: 200px;
+  max-width: 200px;
   white-space: normal;
 }
+

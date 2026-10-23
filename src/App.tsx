@@ -9,7 +9,7 @@ import React, {
 
 import "./App.css";
 
-type DocumentType = "invoice" | "waybill";
+type DocumentType = "invoice" | "waybill" | "letter";
 
 type InvoiceLine = {
   description: string;
@@ -23,6 +23,15 @@ type WaybillLine = {
   qty: string;
   description: string;
   remarks: string;
+};
+
+type LetterRow = {
+  qty: string;
+  unit: string;
+  partNo: string;
+  description: string;
+  unitPrice: string;
+  extPrice: string;
 };
 
 type InvoiceItem = {
@@ -64,6 +73,376 @@ type WaybillItem = {
   deliveredBy: string;
   receivedBy: string;
   lines?: WaybillLine[];
+};
+
+type LetterItem = {
+  date: string;
+  recipient: string;
+  salutation: string;
+  subject: string;
+  intro: string;
+  mode: "table" | "plain";
+  rows: LetterRow[];
+  total: string;
+  body: string;
+};
+
+/* =====================================================
+   LETTER – SHARED CONSTANTS
+   (used by BOTH the on-screen preview and the Word file)
+===================================================== */
+
+const LETTER_DEFAULT_SALUTATION = "Dear Sir/Madam,";
+
+const LETTER_DEFAULT_INTRO =
+  "Please find below quotation in respect of your request.";
+
+/* Table column widths in Word units (twips). Sum = 9346. */
+const LETTER_COLS = [800, 1250, 1180, 1000, 2300, 1300, 1516];
+const LETTER_CONTENT_W = 9346;
+
+/*
+  Preview: body area available above the locked closing block (px).
+  The Word file uses a matching bottom margin (4340 twips) so body
+  text can never run into the closing block.
+*/
+const LETTER_BODY_MAX_HEIGHT = 563;
+
+const LETTER_TABLE_HEADERS = [
+  "S/NO.",
+  "Quantity Required Packaging",
+  "Unit of Measure",
+  "Part No.",
+  "Description",
+  "Unit Price (NGN)",
+  "Extended Price (NGN)",
+];
+
+const emptyLetterRow = (): LetterRow => ({
+  qty: "",
+  unit: "",
+  partNo: "",
+  description: "",
+  unitPrice: "",
+  extPrice: "",
+});
+
+const formatLetterDate = (d: Date) =>
+  d.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+
+const parseMoney = (value: string) => {
+  const n = parseFloat(
+    String(value || "").replace(/[^0-9.\-]/g, "")
+  );
+  return isNaN(n) ? 0 : n;
+};
+
+/* =====================================================
+   LETTER – WORD DOCUMENT BUILDER
+   Letterhead is placed behind the text on every page.
+   The closing block is locked and sits near the bottom
+   of the LAST page. The table grows / continues onto
+   new pages automatically.
+===================================================== */
+
+const buildLetterDocument = (
+  D: any,
+  d: any,
+  bgBytes: any,
+  sigBytes: any
+) => {
+  const FONT = "Arial";
+  const BODY = 22; // 11pt
+  const TABLE_SIZE = 20; // 10pt
+
+  const runsFromText = (text: any, opts: any = {}) => {
+    const lines = String(text ?? "")
+      .replace(/\r/g, "")
+      .split("\n");
+
+    return lines.map(
+      (line, i) =>
+        new D.TextRun({
+          text: line,
+          break: i === 0 ? 0 : 1,
+          font: FONT,
+          size: opts.size || BODY,
+          bold: !!opts.bold,
+          underline: opts.underline ? {} : undefined,
+        })
+    );
+  };
+
+  const para = (text: any, opts: any = {}) =>
+    new D.Paragraph({
+      children: runsFromText(text, opts),
+      spacing: {
+        before: 0,
+        after: opts.after ?? 0,
+        line: 276,
+      },
+      alignment: D.AlignmentType.LEFT,
+    });
+
+  const children: any[] = [];
+
+  children.push(para(d.date, { bold: true, after: 240 }));
+
+  if ((d.recipient || "").trim()) {
+    children.push(
+      para(d.recipient, { bold: true, after: 240 })
+    );
+  }
+
+  if ((d.salutation || "").trim()) {
+    children.push(para(d.salutation, { after: 240 }));
+  }
+
+  if ((d.subject || "").trim()) {
+    children.push(
+      para(d.subject, {
+        bold: true,
+        underline: true,
+        after: 240,
+      })
+    );
+  }
+
+  if ((d.intro || "").trim()) {
+    children.push(para(d.intro, { after: 160 }));
+  }
+
+  if (d.mode === "table") {
+    const cols = LETTER_COLS;
+
+    const line = {
+      style: D.BorderStyle.SINGLE,
+      size: 4,
+      color: "808080",
+    };
+
+    const borders = {
+      top: line,
+      bottom: line,
+      left: line,
+      right: line,
+    };
+
+    const cell = (
+      text: any,
+      i: number,
+      bold = false,
+      keepNext = false
+    ) =>
+      new D.TableCell({
+        width: { size: cols[i], type: D.WidthType.DXA },
+        borders,
+        verticalAlign: D.VerticalAlign.TOP,
+        margins: { top: 50, bottom: 50, left: 80, right: 80 },
+        children: [
+          new D.Paragraph({
+            children: runsFromText(text, {
+              size: TABLE_SIZE,
+              bold,
+            }),
+            spacing: { before: 0, after: 0, line: 252 },
+            keepNext,
+          }),
+        ],
+      });
+
+    const rows: any[] = [
+      new D.TableRow({
+        tableHeader: true,
+        cantSplit: true,
+        children: LETTER_TABLE_HEADERS.map((h, i) =>
+          cell(h, i, true)
+        ),
+      }),
+    ];
+
+    d.rows.forEach((r: any, idx: number) => {
+      /* last item row stays together with the TOTAL row */
+      const keep = idx === d.rows.length - 1;
+
+      rows.push(
+        new D.TableRow({
+          cantSplit: true,
+          children: [
+            cell(String(idx + 1), 0, false, keep),
+            cell(r.qty, 1, false, keep),
+            cell(r.unit, 2, false, keep),
+            cell(r.partNo, 3, false, keep),
+            cell(r.description, 4, false, keep),
+            cell(r.unitPrice, 5, false, keep),
+            cell(r.extPrice, 6, false, keep),
+          ],
+        })
+      );
+    });
+
+    rows.push(
+      new D.TableRow({
+        cantSplit: true,
+        children: [
+          cell("", 0),
+          cell("", 1),
+          cell("TOTAL", 2, true),
+          cell("", 3),
+          cell("", 4),
+          cell("", 5),
+          cell(d.total, 6, true),
+        ],
+      })
+    );
+
+    children.push(
+      new D.Table({
+        width: {
+          size: LETTER_CONTENT_W,
+          type: D.WidthType.DXA,
+        },
+        columnWidths: cols,
+        rows,
+      })
+    );
+  } else {
+    String(d.body || "")
+      .replace(/\r/g, "")
+      .split("\n")
+      .forEach((l) => children.push(para(l)));
+  }
+
+  /* ---------- LOCKED CLOSING BLOCK ---------- */
+
+  const frame = {
+    type: "absolute",
+    position: { x: 0, y: 12700 },
+    width: LETTER_CONTENT_W,
+    height: 2300,
+    anchor: {
+      horizontal: D.FrameAnchorType.MARGIN,
+      vertical: D.FrameAnchorType.PAGE,
+    },
+    rule: D.HeightRule.AT_LEAST,
+    wrap: D.FrameWrap.AROUND,
+  };
+
+  const framed = (text: string, after = 0) =>
+    new D.Paragraph({
+      frame,
+      children: runsFromText(text, { bold: true }),
+      spacing: { before: 0, after, line: 276 },
+    });
+
+  children.push(
+    framed("Thank you for your usual cooperation.", 280)
+  );
+  children.push(framed("Yours Sincerely"));
+  children.push(framed("For: Young and Fresh Controls Ltd"));
+
+  if (sigBytes) {
+    children.push(
+      new D.Paragraph({
+        frame,
+        spacing: { before: 100, after: 0, line: 240 },
+        children: [
+          new D.ImageRun({
+            type: "png",
+            data: sigBytes,
+            transformation: { width: 190, height: 39 },
+          }),
+        ],
+      })
+    );
+  } else {
+    children.push(framed("", 480));
+  }
+
+  children.push(framed("Emmanuel M. Mark-Egart"));
+  children.push(framed("Managing Director/CEO"));
+
+  /* plain paragraph so the frame is never the last item */
+  children.push(
+    new D.Paragraph({
+      spacing: {
+        before: 0,
+        after: 0,
+        line: 20,
+        lineRule: D.LineRuleType.EXACT,
+      },
+      run: { size: 2 },
+      children: [],
+    })
+  );
+
+  /* ---------- LETTERHEAD (behind text, every page) ---------- */
+
+  const header = new D.Header({
+    children: [
+      new D.Paragraph({
+        spacing: { before: 0, after: 0 },
+        children: bgBytes
+          ? [
+              new D.ImageRun({
+                type: "jpg",
+                data: bgBytes,
+                transformation: { width: 794, height: 1123 },
+                floating: {
+                  horizontalPosition: {
+                    relative:
+                      D.HorizontalPositionRelativeFrom.PAGE,
+                    offset: 0,
+                  },
+                  verticalPosition: {
+                    relative:
+                      D.VerticalPositionRelativeFrom.PAGE,
+                    offset: 0,
+                  },
+                  behindDocument: true,
+                  allowOverlap: true,
+                  lockAnchor: true,
+                  wrap: { type: D.TextWrappingType.NONE },
+                },
+              }),
+            ]
+          : [],
+      }),
+    ],
+  });
+
+  return new D.Document({
+    creator: "Young and Fresh Controls Limited",
+    title: "Letter",
+    styles: {
+      default: {
+        document: { run: { font: FONT, size: BODY } },
+      },
+    },
+    sections: [
+      {
+        properties: {
+          page: {
+            size: { width: 11906, height: 16838 },
+            margin: {
+              top: 2600,
+              bottom: 4340,
+              left: 1280,
+              right: 1280,
+              header: 0,
+              footer: 0,
+            },
+          },
+        },
+        headers: { default: header },
+        children,
+      },
+    ],
+  });
 };
 
 export default function App() {
@@ -179,6 +558,45 @@ export default function App() {
     useState("");
 
   /* =====================================================
+     LETTER
+  ===================================================== */
+
+  const [letterDate, setLetterDate] =
+    useState(formatLetterDate(today));
+
+  const [letterRecipient, setLetterRecipient] =
+    useState("");
+
+  const [letterSalutation, setLetterSalutation] =
+    useState(LETTER_DEFAULT_SALUTATION);
+
+  const [letterSubject, setLetterSubject] =
+    useState("");
+
+  const [letterIntro, setLetterIntro] =
+    useState(LETTER_DEFAULT_INTRO);
+
+  const [letterMode, setLetterMode] =
+    useState<"table" | "plain">("table");
+
+  const [letterRows, setLetterRows] =
+    useState<LetterRow[]>([emptyLetterRow()]);
+
+  const [letterTotal, setLetterTotal] =
+    useState("");
+
+  const [letterBody, setLetterBody] =
+    useState("");
+
+  const [letterHistory, setLetterHistory] =
+    useState<LetterItem[]>([]);
+
+  const [letterOverflow, setLetterOverflow] =
+    useState(false);
+
+  const letterBodyRef = useRef(null);
+
+  /* =====================================================
      DOCUMENT / SCALING
   ===================================================== */
 
@@ -234,9 +652,19 @@ export default function App() {
           JSON.parse(savedWaybills)
         );
       }
+
+      const savedLetters =
+        localStorage.getItem("letterHistory");
+
+      if (savedLetters) {
+        setLetterHistory(
+          JSON.parse(savedLetters)
+        );
+      }
     } catch {
       setHistory([]);
       setWaybillHistory([]);
+      setLetterHistory([]);
     }
   }, []);
 
@@ -386,7 +814,7 @@ export default function App() {
           ? current
           : nextTops
       );
-    } else {
+    } else if (documentType === "waybill") {
       const nextTops = measureRows(
         "waybill",
         waybillLines.length,
@@ -408,6 +836,36 @@ export default function App() {
     documentType,
     invoiceLines,
     waybillLines,
+  ]);
+
+  /* =====================================================
+     LETTER – OVERFLOW CHECK
+     Warns when the body is taller than the space above
+     the locked closing block (Word file will simply
+     continue onto a second page).
+  ===================================================== */
+
+  useLayoutEffect(() => {
+    if (documentType !== "letter") return;
+
+    const el = letterBodyRef.current;
+
+    if (!el) return;
+
+    setLetterOverflow(
+      el.offsetHeight > LETTER_BODY_MAX_HEIGHT
+    );
+  }, [
+    documentType,
+    letterDate,
+    letterRecipient,
+    letterSalutation,
+    letterSubject,
+    letterIntro,
+    letterMode,
+    letterRows,
+    letterTotal,
+    letterBody,
   ]);
 
   /* =====================================================
@@ -775,6 +1233,235 @@ export default function App() {
   };
 
   /* =====================================================
+     LETTER FUNCTIONS
+  ===================================================== */
+
+  const updateLetterRow = (
+    index: number,
+    field: keyof LetterRow,
+    value: string
+  ) => {
+    setLetterRows((current) =>
+      current.map((row, i) =>
+        i === index
+          ? {
+              ...row,
+              [field]: value,
+            }
+          : row
+      )
+    );
+  };
+
+  const addLetterRow = () => {
+    setLetterRows((current) => [
+      ...current,
+      emptyLetterRow(),
+    ]);
+  };
+
+  const removeLetterRow = (
+    index: number
+  ) => {
+    setLetterRows((current) =>
+      current.length === 1
+        ? [emptyLetterRow()]
+        : current.filter(
+            (_, i) => i !== index
+          )
+    );
+  };
+
+  const autoSumLetterTotal = () => {
+    const sum = letterRows.reduce(
+      (total, row) =>
+        total + parseMoney(row.extPrice),
+      0
+    );
+
+    setLetterTotal(
+      sum.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+    );
+  };
+
+  const saveLetter = () => {
+    const updated: LetterItem[] = [
+      {
+        date: letterDate,
+        recipient: letterRecipient,
+        salutation: letterSalutation,
+        subject: letterSubject,
+        intro: letterIntro,
+        mode: letterMode,
+        rows: letterRows,
+        total: letterTotal,
+        body: letterBody,
+      },
+      ...letterHistory,
+    ];
+
+    setLetterHistory(updated);
+
+    try {
+      localStorage.setItem(
+        "letterHistory",
+        JSON.stringify(updated)
+      );
+    } catch {}
+
+    alert("Letter Saved!");
+  };
+
+  const loadLetter = (
+    item: LetterItem
+  ) => {
+    setLetterDate(item.date || "");
+    setLetterRecipient(
+      item.recipient || ""
+    );
+    setLetterSalutation(
+      item.salutation || ""
+    );
+    setLetterSubject(item.subject || "");
+    setLetterIntro(item.intro || "");
+    setLetterMode(
+      item.mode === "plain"
+        ? "plain"
+        : "table"
+    );
+    setLetterRows(
+      item.rows && item.rows.length
+        ? item.rows
+        : [emptyLetterRow()]
+    );
+    setLetterTotal(item.total || "");
+    setLetterBody(item.body || "");
+
+    setDocumentType("letter");
+  };
+
+  const clearLetterFields = () => {
+    setLetterRecipient("");
+    setLetterSalutation(
+      LETTER_DEFAULT_SALUTATION
+    );
+    setLetterSubject("");
+    setLetterIntro(LETTER_DEFAULT_INTRO);
+    setLetterRows([emptyLetterRow()]);
+    setLetterTotal("");
+    setLetterBody("");
+  };
+
+  /* =====================================================
+     LETTER – DOWNLOAD AS WORD (.docx)
+  ===================================================== */
+
+  const downloadLetterWord = async () => {
+    try {
+      const D = await import("docx");
+
+      /*
+        Only accept real images. (A dev server returns
+        index.html with status 200 for a missing file,
+        so the content type must be checked.)
+      */
+      const fetchImage = async (
+        url: string
+      ) => {
+        try {
+          const response = await fetch(url);
+
+          if (!response.ok) return null;
+
+          const type =
+            response.headers.get(
+              "content-type"
+            ) || "";
+
+          if (!type.startsWith("image/"))
+            return null;
+
+          return new Uint8Array(
+            await response.arrayBuffer()
+          );
+        } catch {
+          return null;
+        }
+      };
+
+      const bgBytes = await fetchImage(
+        letterTemplateSrc
+      );
+
+      const sigBytes = await fetchImage(
+        letterSignatureSrc
+      );
+
+      if (!bgBytes) {
+        alert(
+          "Letterhead image not found (public/letter_canvas.jpeg). The Word file will be created without the letterhead."
+        );
+      }
+
+      const doc = buildLetterDocument(
+        D,
+        {
+          date: letterDate,
+          recipient: letterRecipient,
+          salutation: letterSalutation,
+          subject: letterSubject,
+          intro: letterIntro,
+          mode: letterMode,
+          rows: letterRows,
+          total: letterTotal,
+          body: letterBody,
+        },
+        bgBytes,
+        sigBytes
+      );
+
+      const blob = await D.Packer.toBlob(doc);
+
+      const slug = (
+        letterSubject || "letter"
+      )
+        .slice(0, 40)
+        .replace(/[^a-z0-9]+/gi, "-")
+        .replace(/^-+|-+$/g, "");
+
+      const link =
+        document.createElement("a");
+
+      link.href = URL.createObjectURL(blob);
+
+      link.download = `${
+        slug || "letter"
+      }.docx`;
+
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setTimeout(
+        () => URL.revokeObjectURL(link.href),
+        1000
+      );
+    } catch (error) {
+      console.error(
+        "Word generation failed:",
+        error
+      );
+
+      alert(
+        "Unable to generate the Word file. Please make sure the 'docx' package is installed (npm install docx)."
+      );
+    }
+  };
+
+  /* =====================================================
      PDF
   ===================================================== */
 
@@ -887,8 +1574,27 @@ export default function App() {
     process.env.PUBLIC_URL +
     "/waybill_canvas.jpeg";
 
+  const letterTemplateSrc =
+    process.env.PUBLIC_URL +
+    "/letter_canvas.jpeg";
+
+  const letterSignatureSrc =
+    process.env.PUBLIC_URL +
+    "/signature.png";
+
+  const invoiceSignatureSrc =
+    process.env.PUBLIC_URL +
+    "/signature.png";
+
+  const waybillSignatureSrc =
+    process.env.PUBLIC_URL +
+    "/signature.png";
+
   const isInvoice =
     documentType === "invoice";
+
+  const isLetter =
+    documentType === "letter";
 
   /* =====================================================
      RENDER
@@ -900,7 +1606,9 @@ export default function App() {
       <h1 className="title">
         {isInvoice
           ? "E-Invoice"
-          : "E-Waybill"}
+          : isLetter
+            ? "E-Letter"
+            : "E-Waybill"}
       </h1>
 
       <div className="document-switcher">
@@ -926,7 +1634,7 @@ export default function App() {
           type="button"
           className={
             "document-tab " +
-            (!isInvoice
+            (documentType === "waybill"
               ? "active"
               : "")
           }
@@ -937,6 +1645,23 @@ export default function App() {
           }
         >
           Waybill
+        </button>
+
+        <button
+          type="button"
+          className={
+            "document-tab " +
+            (isLetter
+              ? "active"
+              : "")
+          }
+          onClick={() =>
+            setDocumentType(
+              "letter"
+            )
+          }
+        >
+          Letter
         </button>
 
       </div>
@@ -960,7 +1685,9 @@ export default function App() {
                 "document-transform " +
                 (isInvoice
                   ? "invoice-document"
-                  : "waybill-document")
+                  : isLetter
+                    ? "letter-document"
+                    : "waybill-document")
               }
               style={{
                 transform:
@@ -977,7 +1704,9 @@ export default function App() {
                   src={
                     isInvoice
                       ? invoiceTemplateSrc
-                      : waybillTemplateSrc
+                      : isLetter
+                        ? letterTemplateSrc
+                        : waybillTemplateSrc
                   }
                   className="invoice-img"
                   crossOrigin="anonymous"
@@ -985,7 +1714,9 @@ export default function App() {
                   alt={
                     isInvoice
                       ? "Invoice Template"
-                      : "Waybill Template"
+                      : isLetter
+                        ? "Letter Template"
+                        : "Waybill Template"
                   }
                 />
 
@@ -1110,6 +1841,174 @@ export default function App() {
                       {amountInWords}
                     </div>
 
+                    <img
+                      src={invoiceSignatureSrc}
+                      className="invoice-signature"
+                      crossOrigin="anonymous"
+                      draggable={false}
+                      alt=""
+                      onError={(e) => {
+                        e.currentTarget.style.display =
+                          "none";
+                      }}
+                    />
+
+                  </>
+
+                ) : isLetter ? (
+
+                  /* =========================
+                     LETTER
+                  ========================= */
+
+                  <>
+
+                    <div
+                      ref={letterBodyRef}
+                      className={
+                        "letter-body" +
+                        (letterOverflow
+                          ? " overflowing"
+                          : "")
+                      }
+                    >
+
+                      <div className="letter-p letter-bold letter-gap">
+                        {letterDate || "\u00A0"}
+                      </div>
+
+                      {letterRecipient.trim() ? (
+                        <div className="letter-p letter-bold letter-gap">
+                          {letterRecipient}
+                        </div>
+                      ) : null}
+
+                      {letterSalutation.trim() ? (
+                        <div className="letter-p letter-gap">
+                          {letterSalutation}
+                        </div>
+                      ) : null}
+
+                      {letterSubject.trim() ? (
+                        <div className="letter-p letter-bold letter-underline letter-gap">
+                          {letterSubject}
+                        </div>
+                      ) : null}
+
+                      {letterIntro.trim() ? (
+                        <div className="letter-p letter-gap-sm">
+                          {letterIntro}
+                        </div>
+                      ) : null}
+
+                      {letterMode === "table" ? (
+
+                        <table className="letter-table">
+
+                          <colgroup>
+                            {LETTER_COLS.map(
+                              (width, i) => (
+                                <col
+                                  key={i}
+                                  style={{
+                                    width:
+                                      `${(width / LETTER_CONTENT_W) * 100}%`,
+                                  }}
+                                />
+                              )
+                            )}
+                          </colgroup>
+
+                          <thead>
+                            <tr>
+                              {LETTER_TABLE_HEADERS.map(
+                                (heading) => (
+                                  <th key={heading}>
+                                    {heading}
+                                  </th>
+                                )
+                              )}
+                            </tr>
+                          </thead>
+
+                          <tbody>
+
+                            {letterRows.map(
+                              (row, index) => (
+                                <tr
+                                  key={
+                                    `letter-row-${index}`
+                                  }
+                                >
+                                  <td>{index + 1}</td>
+                                  <td>{row.qty}</td>
+                                  <td>{row.unit}</td>
+                                  <td>{row.partNo}</td>
+                                  <td>{row.description}</td>
+                                  <td>{row.unitPrice}</td>
+                                  <td>{row.extPrice}</td>
+                                </tr>
+                              )
+                            )}
+
+                            <tr className="letter-total-row-preview">
+                              <td></td>
+                              <td></td>
+                              <td>TOTAL</td>
+                              <td></td>
+                              <td></td>
+                              <td></td>
+                              <td>{letterTotal}</td>
+                            </tr>
+
+                          </tbody>
+
+                        </table>
+
+                      ) : (
+
+                        <div className="letter-p">
+                          {letterBody}
+                        </div>
+
+                      )}
+
+                    </div>
+
+                    {/* LOCKED CLOSING BLOCK – not editable */}
+
+                    <div className="letter-closing">
+
+                      <div className="letter-closing-thanks">
+                        Thank you for your usual cooperation.
+                      </div>
+
+                      <div>Yours Sincerely</div>
+
+                      <div>
+                        For: Young and Fresh Controls Ltd
+                      </div>
+
+                      <div className="letter-signature-slot">
+                        <img
+                          src={letterSignatureSrc}
+                          className="letter-signature"
+                          crossOrigin="anonymous"
+                          draggable={false}
+                          alt=""
+                          onError={(e) => {
+                            e.currentTarget.style.display =
+                              "none";
+                          }}
+                        />
+                      </div>
+
+                      <div>Emmanuel M. Mark-Egart</div>
+
+                      <div>Managing Director/CEO</div>
+
+                    </div>
+
                   </>
 
                 ) : (
@@ -1225,6 +2124,18 @@ export default function App() {
                     <div className="overlay waybill-delivered-by">
                       {waybillDeliveredBy}
                     </div>
+
+                    <img
+                      src={waybillSignatureSrc}
+                      className="waybill-signature waybill-signature-left-img"
+                      crossOrigin="anonymous"
+                      draggable={false}
+                      alt=""
+                      onError={(e) => {
+                        e.currentTarget.style.display =
+                          "none";
+                      }}
+                    />
 
                     <div className="overlay waybill-signature-left">
                       {waybillSignatureLeft}
@@ -1564,6 +2475,460 @@ export default function App() {
                           className="btn load-btn"
                           onClick={() =>
                             loadInvoice(
+                              item
+                            )
+                          }
+                        >
+                          Load
+                        </button>
+
+                      </div>
+
+                    )
+                  )
+
+                )}
+
+              </div>
+
+            </>
+
+          ) : isLetter ? (
+
+            <>
+
+              <div className="panel">
+
+                <h3>
+                  Letter Manual Entry
+                </h3>
+
+                <label className="label">
+                  Date
+                </label>
+
+                <input
+                  className="input"
+                  value={letterDate}
+                  onChange={(e) =>
+                    setLetterDate(
+                      e.target.value
+                    )
+                  }
+                />
+
+                <label className="label">
+                  Recipient (one line per row)
+                </label>
+
+                <textarea
+                  className="input"
+                  rows={6}
+                  value={letterRecipient}
+                  onChange={(e) =>
+                    setLetterRecipient(
+                      e.target.value
+                    )
+                  }
+                />
+
+                <label className="label">
+                  Salutation
+                </label>
+
+                <input
+                  className="input"
+                  value={letterSalutation}
+                  onChange={(e) =>
+                    setLetterSalutation(
+                      e.target.value
+                    )
+                  }
+                />
+
+                <label className="label">
+                  Subject (bold &amp; underlined)
+                </label>
+
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={letterSubject}
+                  onChange={(e) =>
+                    setLetterSubject(
+                      e.target.value
+                    )
+                  }
+                />
+
+                <label className="label">
+                  Opening line
+                </label>
+
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={letterIntro}
+                  onChange={(e) =>
+                    setLetterIntro(
+                      e.target.value
+                    )
+                  }
+                />
+
+                <div className="letter-section-title">
+                  Letter Body
+                </div>
+
+                <div className="letter-mode-switch">
+
+                  <button
+                    type="button"
+                    className={
+                      "letter-mode-btn " +
+                      (letterMode === "table"
+                        ? "active"
+                        : "")
+                    }
+                    onClick={() =>
+                      setLetterMode("table")
+                    }
+                  >
+                    Table
+                  </button>
+
+                  <button
+                    type="button"
+                    className={
+                      "letter-mode-btn " +
+                      (letterMode === "plain"
+                        ? "active"
+                        : "")
+                    }
+                    onClick={() =>
+                      setLetterMode("plain")
+                    }
+                  >
+                    Plain text
+                  </button>
+
+                </div>
+
+                {letterMode === "table" ? (
+
+                  <>
+
+                    {letterRows.map(
+                      (row, index) => (
+
+                        <div
+                          className="letter-row-card"
+                          key={
+                            `letter-editor-${index}`
+                          }
+                        >
+
+                          <div className="letter-row-header">
+
+                            <strong>
+                              Row {index + 1}
+                            </strong>
+
+                            <button
+                              type="button"
+                              className="letter-remove-btn"
+                              onClick={() =>
+                                removeLetterRow(
+                                  index
+                                )
+                              }
+                            >
+                              Remove
+                            </button>
+
+                          </div>
+
+                          <div className="row">
+
+                            <div className="field-half">
+
+                              <label className="label">
+                                Qty / Packaging
+                              </label>
+
+                              <input
+                                className="input"
+                                value={row.qty}
+                                onChange={(e) =>
+                                  updateLetterRow(
+                                    index,
+                                    "qty",
+                                    e.target.value
+                                  )
+                                }
+                              />
+
+                            </div>
+
+                            <div className="field-half">
+
+                              <label className="label">
+                                Unit of Measure
+                              </label>
+
+                              <input
+                                className="input"
+                                value={row.unit}
+                                onChange={(e) =>
+                                  updateLetterRow(
+                                    index,
+                                    "unit",
+                                    e.target.value
+                                  )
+                                }
+                              />
+
+                            </div>
+
+                          </div>
+
+                          <label className="label">
+                            Part No.
+                          </label>
+
+                          <input
+                            className="input"
+                            value={row.partNo}
+                            onChange={(e) =>
+                              updateLetterRow(
+                                index,
+                                "partNo",
+                                e.target.value
+                              )
+                            }
+                          />
+
+                          <label className="label">
+                            Description
+                          </label>
+
+                          <textarea
+                            className="input"
+                            rows={3}
+                            value={
+                              row.description
+                            }
+                            onChange={(e) =>
+                              updateLetterRow(
+                                index,
+                                "description",
+                                e.target.value
+                              )
+                            }
+                          />
+
+                          <div className="row">
+
+                            <div className="field-half">
+
+                              <label className="label">
+                                Unit Price (NGN)
+                              </label>
+
+                              <input
+                                className="input"
+                                value={
+                                  row.unitPrice
+                                }
+                                onChange={(e) =>
+                                  updateLetterRow(
+                                    index,
+                                    "unitPrice",
+                                    e.target.value
+                                  )
+                                }
+                              />
+
+                            </div>
+
+                            <div className="field-half">
+
+                              <label className="label">
+                                Extended Price (NGN)
+                              </label>
+
+                              <input
+                                className="input"
+                                value={
+                                  row.extPrice
+                                }
+                                onChange={(e) =>
+                                  updateLetterRow(
+                                    index,
+                                    "extPrice",
+                                    e.target.value
+                                  )
+                                }
+                              />
+
+                            </div>
+
+                          </div>
+
+                        </div>
+
+                      )
+                    )}
+
+                    <button
+                      type="button"
+                      className="btn add-line"
+                      onClick={
+                        addLetterRow
+                      }
+                    >
+                      + Add Table Row
+                    </button>
+
+                    <label className="label">
+                      TOTAL (NGN)
+                    </label>
+
+                    <div className="letter-total-line">
+
+                      <input
+                        className="input"
+                        value={letterTotal}
+                        onChange={(e) =>
+                          setLetterTotal(
+                            e.target.value
+                          )
+                        }
+                      />
+
+                      <button
+                        type="button"
+                        className="letter-small-btn"
+                        onClick={
+                          autoSumLetterTotal
+                        }
+                      >
+                        Auto-sum
+                      </button>
+
+                    </div>
+
+                  </>
+
+                ) : (
+
+                  <>
+
+                    <label className="label">
+                      Body text
+                    </label>
+
+                    <textarea
+                      className="input letter-body-input"
+                      rows={10}
+                      value={letterBody}
+                      onChange={(e) =>
+                        setLetterBody(
+                          e.target.value
+                        )
+                      }
+                    />
+
+                  </>
+
+                )}
+
+                {letterOverflow ? (
+
+                  <div className="letter-warning">
+                    The body is longer than one page. In the
+                    Word file it will continue onto a second
+                    page and the closing block will move to
+                    the last page.
+                  </div>
+
+                ) : null}
+
+                <div className="letter-note">
+                  Locked (not editable): everything from
+                  “Thank you for your usual cooperation.”
+                  down to “Managing Director/CEO”.
+                </div>
+
+                <div className="buttons-row">
+
+                  <button
+                    type="button"
+                    className="btn save"
+                    onClick={
+                      saveLetter
+                    }
+                  >
+                    Save Letter
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn clear"
+                    onClick={
+                      clearLetterFields
+                    }
+                  >
+                    Clear
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn pdf"
+                    onClick={
+                      downloadLetterWord
+                    }
+                  >
+                    Download Word
+                  </button>
+
+                </div>
+
+              </div>
+
+              <div className="panel history-panel">
+
+                <h3>
+                  Saved Letters
+                </h3>
+
+                {letterHistory.length === 0 ? (
+
+                  <div className="empty-history">
+                    No saved letters yet.
+                  </div>
+
+                ) : (
+
+                  letterHistory.map(
+                    (item, index) => (
+
+                      <div
+                        key={index}
+                        className="history-item"
+                      >
+
+                        {item.date} —{" "}
+                        {item.subject ||
+                          (item.recipient || "")
+                            .split("\n")[0] ||
+                          "Untitled"}
+
+                        <button
+                          type="button"
+                          className="btn load-btn"
+                          onClick={() =>
+                            loadLetter(
                               item
                             )
                           }

@@ -60,7 +60,6 @@ type WaybillItem = {
   qty: string;
   description: string;
   remarks: string;
-  grn: string;
   receiverName: string;
   signatureLeft: string;
   signatureRight: string;
@@ -520,9 +519,6 @@ export default function App() {
         remarks: "",
       },
     ]);
-
-  const [waybillGrn, setWaybillGrn] =
-    useState("");
 
   const [waybillSumTotal, setWaybillSumTotal] =
     useState("");
@@ -1097,7 +1093,6 @@ export default function App() {
         description:
           firstLine.description,
         remarks: firstLine.remarks,
-        grn: waybillGrn,
         receiverName:
           waybillReceiverName,
         signatureLeft:
@@ -1218,7 +1213,6 @@ export default function App() {
       },
     ]);
 
-    setWaybillGrn("");
     setWaybillSumTotal("");
     setWaybillReceiverName("");
     setWaybillDeliveredBy("");
@@ -2104,10 +2098,6 @@ export default function App() {
                         );
                       }
                     )}
-
-                    <div className="overlay waybill-grn">
-                      {waybillGrn}
-                    </div>
 
                     <div className="overlay waybill-sum-total">
                       {waybillSumTotal}
